@@ -1,4 +1,6 @@
+(use-modules (poormans guile))
 
+(read-set! keywords 'postfix)
 
 (define-type Expression
   (Variable name: String)
@@ -17,12 +19,7 @@
   (List of: Type)
   (Maps from: Type to: Type))
 
-(define-type MonoType
-  (TypeVariable name: String)
-  (TypeApplication of: TypeFunction
-		   to: (list-of MonoType)))
-
 (define-type PolyType
-  ()
+  (Grounded type: Type)
   (TypeQuantifier of: TypeVariable
 		  in: PolyType))

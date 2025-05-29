@@ -1,8 +1,7 @@
-(read-set! keywords 'postfix)
-
-(use-modules (oop goops))
-
-(use-modules (grand scheme))
+(define-module (poormans guile)
+  #:use-module (grand scheme)
+  #:use-module (oop goops)
+  #:export-syntax (define-type))
 
 (define (symbol+keyword+type+value keyword+attribute-list)
   (let loop ((input keyword+attribute-list))

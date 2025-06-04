@@ -94,7 +94,6 @@
  (combine '((,x . ,y)) '((,z . (Bool -> ,x))))
  ===> ((,z . (Bool -> ,y)) (,x . ,y)))
 
-
 (define unique-symbol-counter
   (make-parameter 0))
 
@@ -114,7 +113,7 @@
 (define* (fresh-type-variable #:optional (prefix "T"))
   `(,type-variable-marker ,(unique-symbol prefix)))
 
-(define* (instantiate type-scheme #;TypeScheme #:optional (mappings '()))
+(define* (instantiate type-scheme #:optional (mappings '()))
   ;;Type
   (match type-scheme
     (`(forall ,variables ,scheme)
@@ -148,6 +147,12 @@
     '(forall (,y) (forall (,z) (,z -> Bool)))))
  ===> (,z~1 -> Bool))
 
+(define (union a b)
+  `(,@(only (isnt _ member a) b) ,@a))
+
+(e.g.
+ (union '(a b c) '(b c d)) ===> (d a b c))
+
 (define (free-variables type-scheme)
   (match type-scheme
     (`(forall ,variables ,scheme)
@@ -157,7 +162,10 @@
      `(,type-scheme))
     
     (`(,_ . ,_)
-     (append-map free-variables type-scheme))
+     (fold-left (lambda (set scheme)
+		  (union set (free-variables scheme)))
+		'()
+		type-scheme))
     
     (_
      '())))
@@ -171,7 +179,7 @@
 (e.g.
  (difference '(a b c) '(b)) ===> (a c))
 
-(define (generalize type #;Type type-environment)
+(define (generalize type type-environment)
   (let ((unbound-variables (difference (free-variables type)
 				       (append-map (lambda (`(,k . ,v))
 						     (free-variables v))
@@ -252,11 +260,15 @@
     
     (not   . (boolean -> boolean))
     (odd?  . (number -> boolean))
-    (even?  . (number -> boolean))
+    (even? . (number -> boolean))
 
     ))
 
-(define* (type+substitutions expression #:optional (type-environment initial-type-environment))
+
+;; "Algorithm W"
+(define* (type+substitutions expression
+			     #:optional
+			     (type-environment initial-type-environment))
   (match expression
     (`(let ((,variable ,value)) ,body)
      (let* ((value-type substitutions
@@ -307,7 +319,6 @@
 	  (primitive-type expression))
       '()))))
 
-
 (e.g.
  (parameterize ((unique-symbol-counter 0))
    (type+substitutions '(lambda (x) x)))
@@ -330,3 +341,72 @@
 			  (o ((lambda (x) x) 1)))))
  ===> boolean ((,T~2 . boolean) (,T~1 . number) (,T~0 . number)))
 
+
+(define* (type-of expression #:optional (type-environment initial-type-environment))
+  (let* ((type substitutions (type+substitutions expression type-environment)))
+    (generalize type type-environment)))
+
+
+(e.g.
+ (parameterize ((unique-symbol-counter 0))
+   (type-of '(lambda (x) x))) ===> (forall (,T~0) (,T~0 -> ,T~0)))
+
+
+;; The M algorithm
+(define (substitutions-unifying expression #;with type #;in type-environment)
+  (match expression
+    (`(lambda (,arg) ,body)
+     (let* ((arg-type (fresh-type-variable))
+	    (body-type (fresh-type-variable))
+	    (function-type-unifier (unify type `(,arg-type -> ,body-type)))
+	    (type-environment* (map (lambda (`(,identifier . ,type))
+				      `(,identifier . ,(substitute type function-type-unifier)))
+				    type-environment))
+	    (arg-type* (substitute arg-type function-type-unifier))
+	    (body-type* (substitute body-type function-type-unifier))
+	    (body-type-unifier (substitutions-unifying
+				body #;with body-type*
+				#;in `((,arg . ,arg-type*) . ,type-environment*))))
+       (combine function-type-unifier body-type-unifier)))
+
+    (`(let ((,variable ,value)) ,body)
+     (let* ((value-type (fresh-type-variable))
+	    (value-type-unifier (substitutions-unifying value #;with value-type
+							#;in type-environment))
+	    (type* (substitute type value-type-unifier))
+	    (type-environment* (map (lambda (`(,identifier . ,type))
+				      `(,identifier . ,(substitute type value-type-unifier)))
+				    type-environment))
+	    (variable-type (generalize (substitute value-type value-type-unifier)
+				       type-environment*))
+	    (body-type-unifier (substitutions-unifying body #;with type*
+						       #;in type-environment*)))
+       (combine value-type-unifier body-type-unifier)))
+
+    (`(,function ,argument)
+     (let* ((argument-type (fresh-type-variable))
+	    (function-type-unifier (substitutions-unifying function #;with
+							   `(,argument-type -> ,type)
+							   #;in type-environment))
+	    (argument-type* (substitute argument-type function-type-unifier))
+	    (type-environment* (map (lambda (`(,identifier . ,type))
+				      `(,identifier . ,(substitute type function-type-unifier)))
+				    type-environment))
+	    (argument-type-unifier (substitutions-unifying argument #;with argument-type*
+							   #;in type-environment*)))
+       (combine function-type-unifier argument-type-unifier)))
+    (_
+     (unify type
+	    (if (symbol? expression)
+		(let ((expression-type (lookup expression type-environment)))
+		  (instantiate expression-type))
+		(primitive-type expression))))))
+
+
+(define* (type-of* expression #:optional (type-environment initial-type-environment))
+  (let* ((type (fresh-type-variable))
+	 (substitution (substitutions-unifying expression #;with type #;in type-environment)))
+    (substitute type substitution)))
+
+(parameterize ((unique-symbol-counter 0))
+   (type-of* '(lambda (x) x)))

@@ -1,5 +1,5 @@
 ;; Code based on Adam Jones' implementation of Hindley-Milner
-;; type inference algorithm that can be found at
+;; type inference algorithms (W and M) that can be found at
 ;; https://github.com/domdomegg/hindley-milner-typescript.git
 ;; with video tutorial available at
 ;; https://www.youtube.com/@adam-jones/videos
@@ -9,8 +9,8 @@
 ;; We represent type variables as two-element lists,
 ;; whose first element is the symbol `unquote'.
 ;; This allows us to write examples in a very concise
-;; manner, but it might be confusing to beginner
-;; Lisp programmers, because the code also uses
+;; manner (as ",variable"), but it might be confusing
+;; to beginner Lisp programmers, because the code also uses
 ;; `unquote' in the regular way (i.e. inside `quasiquote')
 ;;
 
@@ -48,7 +48,8 @@
 (define (lookup variable bindings)
   (match bindings
     (`((,,variable . ,value) . ,_) value)
-    (`((,_ . ,_) . ,sequel) (lookup variable sequel))))
+    (`((,_ . ,_) . ,sequel) (lookup variable sequel))
+    (_ (error "Unbound variable: "variable))))
 
 (e.g.
  (lookup ',b '((,a . 1) (,b . 2) (,c . 3))) ===> 2)
@@ -157,7 +158,7 @@
   (match type-scheme
     (`(forall ,variables ,scheme)
      (difference (free-variables scheme) variables))
-
+    
     (`(,,type-variable-marker ,_)
      `(,type-scheme))
     
@@ -165,8 +166,7 @@
      (fold-left (lambda (set scheme)
 		  (union set (free-variables scheme)))
 		'()
-		type-scheme))
-    
+		type-scheme))    
     (_
      '())))
 
@@ -239,7 +239,6 @@
 (e.g.
  (not (unify '(,a -> ,a) '(Int -> Bool))))
 
-
 (define (primitive-type literal)
   (cond
    ((boolean? literal) 'boolean)
@@ -263,7 +262,6 @@
     (even? . (number -> boolean))
 
     ))
-
 
 ;; "Algorithm W"
 (define* (type+substitutions expression
@@ -360,28 +358,32 @@
 	    (body-type (fresh-type-variable))
 	    (function-type-unifier (unify type `(,arg-type -> ,body-type)))
 	    (type-environment* (map (lambda (`(,identifier . ,type))
-				      `(,identifier . ,(substitute type function-type-unifier)))
+				      `(,identifier . ,(substitute
+							type
+							function-type-unifier)))
 				    type-environment))
 	    (arg-type* (substitute arg-type function-type-unifier))
 	    (body-type* (substitute body-type function-type-unifier))
 	    (body-type-unifier (substitutions-unifying
 				body #;with body-type*
 				#;in `((,arg . ,arg-type*) . ,type-environment*))))
-       (combine function-type-unifier body-type-unifier)))
+       (combine body-type-unifier function-type-unifier)))
 
     (`(let ((,variable ,value)) ,body)
      (let* ((value-type (fresh-type-variable))
 	    (value-type-unifier (substitutions-unifying value #;with value-type
 							#;in type-environment))
 	    (type* (substitute type value-type-unifier))
+	    (value-type* (substitute value-type value-type-unifier))
 	    (type-environment* (map (lambda (`(,identifier . ,type))
 				      `(,identifier . ,(substitute type value-type-unifier)))
 				    type-environment))
 	    (variable-type (generalize (substitute value-type value-type-unifier)
 				       type-environment*))
 	    (body-type-unifier (substitutions-unifying body #;with type*
-						       #;in type-environment*)))
-       (combine value-type-unifier body-type-unifier)))
+						       #;in `((,variable . ,value-type*)
+							      . ,type-environment*))))
+       (combine body-type-unifier value-type-unifier)))
 
     (`(,function ,argument)
      (let* ((argument-type (fresh-type-variable))
@@ -394,7 +396,7 @@
 				    type-environment))
 	    (argument-type-unifier (substitutions-unifying argument #;with argument-type*
 							   #;in type-environment*)))
-       (combine function-type-unifier argument-type-unifier)))
+       (combine argument-type-unifier function-type-unifier)))
     (_
      (unify type
 	    (if (symbol? expression)
@@ -402,11 +404,18 @@
 		  (instantiate expression-type))
 		(primitive-type expression))))))
 
+(parameterize ((unique-symbol-counter 0))
+  (let ((t (fresh-type-variable)))
+    (substitutions-unifying '(lambda (x) x) #;with t #;in initial-type-environment)))
+===> ((,T~2 . ,T~1) ((,T~0 . (,T~1 -> T~2))))
 
 (define* (type-of* expression #:optional (type-environment initial-type-environment))
   (let* ((type (fresh-type-variable))
 	 (substitution (substitutions-unifying expression #;with type #;in type-environment)))
     (substitute type substitution)))
 
-(parameterize ((unique-symbol-counter 0))
-   (type-of* '(lambda (x) x)))
+(e.g.
+ (parameterize ((unique-symbol-counter 0))
+   (type-of* '(let ((o odd?))
+		(o ((lambda (x) x) 1))))) ===> boolean)
+
